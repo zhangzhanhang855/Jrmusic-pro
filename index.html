@@ -3,11 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>JRmusic - Minimal Single Lyric</title>
+    <title>JRmusic - Immersive Lyrics</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Noto+Sans+SC:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --neon: #00f2ff;
+        }
         body, html {
             margin: 0; padding: 0;
             width: 100%; height: 100%;
@@ -17,6 +20,7 @@
             -webkit-font-smoothing: antialiased;
         }
 
+        /* 隐藏滚动条 */
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
@@ -39,20 +43,42 @@
             align-items: center; justify-content: center;
         }
 
-        /* 极致单行歌词显示 */
-        #lyric-display {
-            font-size: 2.5rem;
-            font-weight: 900;
-            color: #ffffff;
+        /* 歌词容器及遮罩渐变 */
+        #lyrics-wrapper {
+            height: 70%; width: 90%; max-width: 900px;
+            position: relative; overflow: hidden;
+            mask-image: linear-gradient(180deg, transparent 0%, #000 20%, #000 80%, transparent 100%);
+            -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 20%, #000 80%, transparent 100%);
+        }
+
+        #lyrics-scroll {
+            position: absolute; top: 40%; width: 100%;
+            transition: transform 0.6s cubic-bezier(0.25, 1, 0.5, 1);
+            will-change: transform;
             text-align: center;
-            width: 90%;
-            max-width: 1200px;
-            text-shadow: 0 8px 30px rgba(0,0,0,0.8);
+        }
+
+        /* 单行歌词的基础排版与景深虚化 */
+        .lyric-line {
+            padding: 20px 10px;
+            font-size: 1.5rem;
+            color: rgba(255, 255, 255, 0.3);
+            transform: scale(0.9);
+            transition: all 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+            cursor: pointer;
             letter-spacing: 0.05em;
-            line-height: 1.4;
-            pointer-events: none; /* 防止遮挡背后的点击事件 */
-            /* 加入极速的文字切换动画感 */
-            transition: opacity 0.15s ease, transform 0.15s ease;
+        }
+
+        .lyric-line:hover { color: rgba(255, 255, 255, 0.6); }
+
+        /* 当前激活歌词：绝对清晰、放大、发光 */
+        .lyric-line.active {
+            color: #ffffff;
+            font-size: 2.2rem;
+            font-weight: 900;
+            transform: scale(1.1);
+            text-shadow: 0 4px 30px rgba(255,255,255,0.4);
+            cursor: default;
         }
 
         /* 侧边栏/列表 */
@@ -92,7 +118,11 @@
     <div id="bg-layer"></div>
 
     <div id="main-view">
-        <div id="lyric-display">正在连接音乐库...</div>
+        <div id="lyrics-wrapper">
+            <div id="lyrics-scroll">
+                <div class="lyric-line active" style="font-size:1.2rem; font-weight:400;">正在连接音乐库...</div>
+            </div>
+        </div>
 
         <div id="controls">
             <div class="flex justify-between items-center w-full">
@@ -139,7 +169,7 @@
 
         const audio = document.getElementById('audio-player');
         const bgLayer = document.getElementById('bg-layer');
-        const lyricDisplay = document.getElementById('lyric-display');
+        const lyricsScroll = document.getElementById('lyrics-scroll');
         const trackTitle = document.getElementById('track-title');
         const trackStatus = document.getElementById('track-status');
         
@@ -179,6 +209,7 @@
 
                 playlists['Root'] = filterAudio(items);
                 
+                // 深度扫描子文件夹
                 const folders = items.filter(i => i.type === 'dir');
                 for (let f of folders) {
                     const subData = await (await fetch(f.url)).json();
@@ -187,12 +218,10 @@
                 }
                 
                 trackStatus.innerText = 'REPO SYNCED';
-                lyricDisplay.innerText = "JRmusic";
                 renderNav();
                 switchPlaylist('Root');
             } catch (e) {
                 trackStatus.innerText = 'SYNC FAILED / API LIMIT';
-                lyricDisplay.innerText = "网络请求受限";
             }
         }
 
@@ -226,13 +255,15 @@
             bgLayer.style.backgroundImage = 'none';
             parsedLyrics = [];
             currentLyricIndex = -1;
-            lyricDisplay.innerText = "提取音轨数据中...";
+            lyricsScroll.innerHTML = '<div class="lyric-line active" style="font-size:1.2rem; font-weight:400;">提取音轨数据中...</div>';
+            lyricsScroll.style.transform = `translateY(0px)`;
             
             if (currentCoverObjectURL) {
                 URL.revokeObjectURL(currentCoverObjectURL);
                 currentCoverObjectURL = null;
             }
 
+            // 更新列表高亮
             switchPlaylist(currentPlaylist);
             sidebar.classList.remove('open');
             if (autoPlay) togglePlay(true);
@@ -254,6 +285,7 @@
                 if (!window.jsmediatags) return;
                 window.jsmediatags.read(blob, {
                     onSuccess: (tag) => {
+                        // 处理背景封面图
                         const pic = tag.tags.picture;
                         if (pic) {
                             const byteArray = new Uint8Array(pic.data);
@@ -262,6 +294,7 @@
                             bgLayer.style.backgroundImage = `url(${currentCoverObjectURL})`;
                         }
 
+                        // 如果外挂 LRC 失败，启用暴力搜索遍历所有节点提取文本
                         if (!lyricsFound) {
                             const innerLrc = aggressivelyFindLyrics(tag.tags);
                             if (innerLrc) processLyrics(innerLrc);
@@ -273,6 +306,7 @@
             }).catch(() => { if(!lyricsFound) displayPureMusic(); });
         }
 
+        // 深度递归遍历对象以寻找隐藏的时间轴标记
         function aggressivelyFindLyrics(tags) {
             if (!tags) return "";
             const extract = (obj) => {
@@ -301,7 +335,7 @@
                     }
                 }
             }
-            return primary; 
+            return primary; // 就算没有时间轴，能拿到文本也行
         }
 
         // --- 3. 歌词时间轴截断引擎 ---
@@ -329,12 +363,14 @@
                 }
                 
                 if (timeTags.length > 0) {
+                    // 1. 剔除时间轴标记
                     let text = line.replace(/\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\]/g, '').trim();
-                    // 核心要求：去除“（翻译：”及之后的所有内容（兼容全/半角括号）
+                    
+                    // 2. 核心要求：去除“（翻译：”及之后的所有内容（兼容全/半角括号）
                     text = text.split('（翻译：')[0].split('(翻译：')[0].trim();
                     
                     for (let t of timeTags) {
-                        parsedLyrics.push({ time: t, text: text || '' });
+                        parsedLyrics.push({ time: t, text: text || '...' });
                     }
                 }
             }
@@ -342,7 +378,18 @@
             if (parsedLyrics.length > 0) {
                 trackStatus.innerText = 'LYRICS SYNCED';
                 parsedLyrics.sort((a, b) => a.time - b.time);
-                lyricDisplay.innerText = trackTitle.innerText; // 播放开始前显示歌名
+                
+                lyricsScroll.innerHTML = parsedLyrics.map((l, i) => 
+                    `<div class="lyric-line" id="lyric-${i}" data-time="${l.time}">${l.text}</div>`
+                ).join('');
+
+                // 点击歌词跳转进度
+                lyricsScroll.querySelectorAll('.lyric-line').forEach(el => {
+                    el.onclick = () => {
+                        audio.currentTime = parseFloat(el.getAttribute('data-time'));
+                        if (audio.paused) togglePlay(true);
+                    };
+                });
             } else {
                 displayPureMusic();
             }
@@ -351,10 +398,11 @@
         function displayPureMusic() {
             parsedLyrics = [];
             trackStatus.innerText = 'PURE MUSIC';
-            lyricDisplay.innerText = "纯 音 乐";
+            lyricsScroll.innerHTML = '<div class="lyric-line active" style="font-weight:900; letter-spacing:4px;">纯 音 乐</div>';
+            lyricsScroll.style.transform = `translateY(0px)`;
         }
 
-        // --- 单句歌词替换刷新 ---
+        // 歌词滚动追随
         function syncLyricsTimeline(s) {
             if (parsedLyrics.length === 0) return;
             let activeIdx = -1;
@@ -364,21 +412,16 @@
                 else break;
             }
             
-            // 只有索引改变时才触发DOM更新
             if (activeIdx !== currentLyricIndex) {
+                lyricsScroll.querySelectorAll('.lyric-line').forEach(el => el.classList.remove('active'));
                 if (activeIdx !== -1) {
-                    const nextText = parsedLyrics[activeIdx].text;
-                    
-                    // 轻微弹跳动效
-                    lyricDisplay.style.opacity = 0.5;
-                    lyricDisplay.style.transform = 'scale(0.95)';
-                    
-                    setTimeout(() => {
-                        // 空行处理，防止失去高度导致闪烁
-                        lyricDisplay.innerText = nextText || " "; 
-                        lyricDisplay.style.opacity = 1;
-                        lyricDisplay.style.transform = 'scale(1)';
-                    }, 50);
+                    const currEl = document.getElementById(`lyric-${activeIdx}`);
+                    if (currEl) {
+                        currEl.classList.add('active');
+                        // 居中计算：容器偏移减去父容器一半加上自身一半
+                        const scrollPos = currEl.offsetTop - (lyricsScroll.parentElement.offsetHeight / 2) + (currEl.offsetHeight / 2);
+                        lyricsScroll.style.transform = `translateY(-${scrollPos}px)`;
+                    }
                 }
                 currentLyricIndex = activeIdx;
             }
@@ -415,8 +458,7 @@
             }
             const pct = (audio.currentTime / audio.duration) * 100;
             progressBar.style.background = `linear-gradient(to right, #fff ${pct}%, rgba(255,255,255,0.2) ${pct}%)`;
-            
-            syncLyricsTimeline(audio.currentTime); // 每帧检查歌词时间
+            syncLyricsTimeline(audio.currentTime);
         };
 
         audio.onended = () => {
